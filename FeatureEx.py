@@ -18,7 +18,7 @@ class KeyExtractor:
         else:
             self.json_files = [data_path]
         self.delimiters = [";", "/", "&", "?",  "(", ")", "{", "}", "[", "]", "\\x", "\\t",'%', '"' , "'",":", "=" ]
-        self.delimiters_2 = [":", "=",";", "/", "&", "?",  "(", ")", "{", "}", "[", "]", "\\x", "\\t",'%', '"' , "'", ]
+        # self.delimiters_2 = [":", "=",";", "/", "&", "?",  "(", ")", "{", "}", "[", "]", "\\x", "\\t",'%', '"' , "'", ]
         self.skip = ['recon' ,'adverti', 'brand' ,'model' ,'Nexus 6','sdk',"\\"]
         self.master_key_map = {}
         self.packet_key_dict = {}
