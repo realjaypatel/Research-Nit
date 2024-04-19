@@ -1,7 +1,7 @@
-import simplejson as sj
 import glob
 import os
 import json
+import csv
 
 class KeyExtractor:
     def __init__(self, data_path):
@@ -9,7 +9,7 @@ class KeyExtractor:
         Initializes the KeyExtractor object.
 
         Args:
-        - directory (str): The directory path where the JSON files are located.
+        - data_path (str): The directory path where the JSON files are located.
         """
         self.data_path = data_path
         if os.path.isdir(data_path):
@@ -17,9 +17,11 @@ class KeyExtractor:
             self.json_files = self.find_json_files(self.directory)
         else:
             self.json_files = [data_path]
-        self.delimiters = [",",";","/","&","?",":","=","(",")","{","}","[","]"]
+        self.delimiters = [",", ";", "/", "&", "?", ":", "=", "(", ")", "{", "}", "[", "]", "\\x", "\\t"]
         self.master_key_map = {}
         self.packet_key_dict = {}
+        self.list_of_keys = []
+        self.total_packets = 0
 
     def extract_keys(self, packet_string):
         """
@@ -31,9 +33,19 @@ class KeyExtractor:
         Returns:
         - keys (list): The list of extracted keys.
         """
+        # keys = [packet_string]
+        # for delimiter in self.delimiters:
+        #     keys[:] = [sub_key for key in keys for sub_key in key.split(delimiter) if not sub_key.isdigit()]
+        # return keys
         keys = [packet_string]
         for delimiter in self.delimiters:
-            keys = [sub_key for key in keys for sub_key in key.split(delimiter)]
+            if delimiter == '=':
+                # print('+++',keys)
+                keys[:] = [sub_key.split('=')[0].strip() for key in keys for sub_key in key.split(delimiter) if not sub_key.isdigit()]
+                # print('->',keys)
+
+            else:
+                keys[:] = [sub_key for key in keys for sub_key in key.split(delimiter) if not sub_key.isdigit()]
         return keys
 
     def list_keys(self, packet):
@@ -51,27 +63,30 @@ class KeyExtractor:
             if key == "pii_types":
                 continue
             if isinstance(value, str):
-                keys.extend(self.extract_keys(packet[key]))
+                keys.extend(self.extract_keys(value))
             elif isinstance(value, dict) and value:
                 keys.extend(filter(None, self.list_keys(value)))
         return keys
 
-    def register_keys(self):
+    def register_keys(self, packetz):
         """
-        Registers the keys from the packets and updates the master key map.
+        Registers the keys from the packets and updates the master key map for a file.
+
+        Args:
+        - packetz (dict): The packet file.
 
         Returns:
         - master_key_map (dict): The updated master key map.
         """
-        for packet in self.packetz:
-            key_list = self.list_keys(self.packetz[packet])
-            self.packet_key_dict[packet] = key_list
+        for packet_id, packet in packetz.items():
+            self.total_packets += 1
+            key_list = self.list_keys(packet)
+            pii_types = packet.get("pii_types", [])
+            self.packet_key_dict[packet_id] = [1 if isinstance(pii_types, list) else 0, key_list]
             for key in key_list:
-                if key in self.master_key_map:
-                    self.master_key_map[key][0] += 1
-                else:
-                    self.master_key_map[key] = [1, 0]
-                if isinstance(self.packetz[packet]["pii_types"], list):
+                self.master_key_map.setdefault(key, [0, 0])
+                self.master_key_map[key][0] += 1
+                if isinstance(pii_types, list):
                     self.master_key_map[key][1] += 1
         return self.master_key_map
     
@@ -85,7 +100,7 @@ class KeyExtractor:
         Returns:
         - master_key_map (dict): The filtered master key map.
         """
-        self.master_key_map = {key: value for key, value in self.master_key_map.items() if value[1] / value[0] >= threshold}
+        self.master_key_map = {key: value for key, value in self.master_key_map.items() if value[1] / value[0] >= threshold and value[0] > 1}
         return self.master_key_map
 
     def process_files(self):
@@ -97,12 +112,12 @@ class KeyExtractor:
         """
         json_files = self.json_files
         for json_file in json_files:
-            print("processing..."+json_file)
+            print("processing..." + json_file)
             with open(json_file, 'r') as data_file:
-                self.packetz = json.loads(data_file.read())
-            self.master_key_map = self.register_keys()
-            output = self.filter_keys(0.95)
-            self.master_key_map = output
+                self.packetz = json.load(data_file)
+            self.register_keys(self.packetz)
+        self.filter_keys(0.65)
+        self.list_of_keys.extend(self.master_key_map.keys())
         return self.master_key_map
 
     def find_json_files(self, directory):
@@ -127,35 +142,39 @@ class KeyExtractor:
         Returns:
         - binary_input (dict): The binary input representation.
         """
-        mkmap = self.master_key_map
-        pkdict = self.packet_key_dict
-        binary_input = {}
-        for i in pkdict:
-            binary_input[i] = {}
-            for j in mkmap:
-                if j in pkdict[i]:
-                    binary_input[i][j] = 1
-                else:
-                    binary_input[i][j] = 0
+        binary_input = []
+        for packet_id, (pii_exist, key_list) in self.packet_key_dict.items():
+            print("generating binary output...[{}]".format(packet_id))
+            key_exist_bin_list = [int(key in key_list) for key in self.list_of_keys]
+            binary_input.append([packet_id, pii_exist] + key_exist_bin_list)
         return binary_input
-    
-# Specify the directory you want to start from
-rootDir = '<path-to-data-folder>'
-# log_path =  "log.txt"
-output = rootDir + 'Output/'
+   
+    def make_csv(self, binary_out, output_path):
+        """
+        Creates a CSV file based on the binary input representation.
 
-key_extractor = KeyExtractor(rootDir)
+        Returns:
+        - None
+        """
+        headers = ["packetId", "pii_exist"] + self.list_of_keys
+        with open(output_path + 'output.csv', 'w') as file:
+            write = csv.writer(file, escapechar='\\')
+            write.writerow(headers)
+            write.writerows(binary_out)
+
+# Specify the directory you want to start from
+rootDir = ""
+data_Dir = rootDir + "antshield_public_dataset/raw_data/auto_anteater/batch1"
+log_path = rootDir + "output/log.txt"
+out_path = rootDir + "output/"
+
+key_extractor = KeyExtractor(data_Dir)
 key_extractor.process_files()
-print("finised processing")
+print("finished processing")
 
 # log = open(log_path, 'w')
-# log.write("master_key_Map : \n" + str(key_extractor.master_key_map) +"packet_key_dict : \n" +str(key_extractor.packet_key_dict))
+# log.write("master_key_Map : \n" + str(key_extractor.master_key_map) +"\npacket_key_dict : \n" +str(key_extractor.packet_key_dict))
 # log.close()
 
 binary_input = key_extractor.make_binary_input()
-
-outputFile = open(output, 'w')
-outputFile.write(str(binary_input) + '\n')
-outputFile.close()
-
-
+key_extractor.make_csv(binary_input, out_path)

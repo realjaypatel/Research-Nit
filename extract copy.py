@@ -1,8 +1,7 @@
-import simplejson as sj
 import glob
 import os
 import json
-
+rootDir = ""
 class KeyExtractor:
     def __init__(self, data_path):
         """
@@ -17,7 +16,7 @@ class KeyExtractor:
             self.json_files = self.find_json_files(self.directory)
         else:
             self.json_files = [data_path]
-        self.delimiters = [",",";","/","&","?",":","=","(",")","{","}","[","]"]
+        self.delimiters = [",", ";", "/", "&", "?", ":", "=", "(", ")", "{", "}", "[", "]", "\\x", "\\t"]
         self.master_key_map = {}
         self.packet_key_dict = {}
 
@@ -33,7 +32,7 @@ class KeyExtractor:
         """
         keys = [packet_string]
         for delimiter in self.delimiters:
-            keys = [sub_key for key in keys for sub_key in key.split(delimiter)]
+            keys = [sub_key for key in keys for sub_key in key.split(delimiter) if not sub_key.isdigit()]
         return keys
 
     def list_keys(self, packet):
@@ -52,6 +51,7 @@ class KeyExtractor:
                 continue
             if isinstance(value, str):
                 keys.extend(self.extract_keys(packet[key]))
+
             elif isinstance(value, dict) and value:
                 keys.extend(filter(None, self.list_keys(value)))
         return keys
@@ -74,7 +74,7 @@ class KeyExtractor:
                 if isinstance(self.packetz[packet]["pii_types"], list):
                     self.master_key_map[key][1] += 1
         return self.master_key_map
-    
+
     def filter_keys(self, threshold):
         """
         Filters the keys in the master key map based on a threshold.
@@ -100,9 +100,8 @@ class KeyExtractor:
             print("processing..."+json_file)
             with open(json_file, 'r') as data_file:
                 self.packetz = json.loads(data_file.read())
-            self.master_key_map = self.register_keys()
-            output = self.filter_keys(0.95)
-            self.master_key_map = output
+            self.register_keys()
+            self.filter_keys(0.95)
         return self.master_key_map
 
     def find_json_files(self, directory):
@@ -131,6 +130,7 @@ class KeyExtractor:
         pkdict = self.packet_key_dict
         binary_input = {}
         for i in pkdict:
+            print("generating binary output....." + i)
             binary_input[i] = {}
             for j in mkmap:
                 if j in pkdict[i]:
@@ -138,24 +138,22 @@ class KeyExtractor:
                 else:
                     binary_input[i][j] = 0
         return binary_input
-    
-# Specify the directory you want to start from
-rootDir = '<path-to-data-folder>'
-# log_path =  "log.txt"
-output = rootDir + 'Output/'
 
-key_extractor = KeyExtractor(rootDir)
+# Specify the directory you want to start from
+data_Dir = rootDir + "antshield_public_dataset/raw_data/"
+log_path = rootDir + "_output/log.txt"
+out_path = rootDir + "_output/output.txt"
+
+key_extractor = KeyExtractor(data_Dir)
 key_extractor.process_files()
 print("finised processing")
 
-# log = open(log_path, 'w')
-# log.write("master_key_Map : \n" + str(key_extractor.master_key_map) +"packet_key_dict : \n" +str(key_extractor.packet_key_dict))
-# log.close()
+log = open(log_path, 'w')
+log.write("master_key_Map : \n" + str(key_extractor.master_key_map) +"\npacket_key_dict : \n" +str(key_extractor.packet_key_dict))
+log.close()
 
 binary_input = key_extractor.make_binary_input()
 
-outputFile = open(output, 'w')
+outputFile = open(out_path, 'w')
 outputFile.write(str(binary_input) + '\n')
 outputFile.close()
-
-
